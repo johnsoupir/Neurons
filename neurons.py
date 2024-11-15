@@ -7,21 +7,17 @@ try:
     has_ollama_lib = True
 except ImportError:
     has_ollama_lib = False
-import requests
-import whisper
-import sounddevice as sd
-import numpy as np
-from scipy.io.wavfile import write
-import tempfile
+import os
 import threading
 import time
 import sounddevice as sd
 import numpy as np
 from scipy.io.wavfile import write
 import whisper
-import tempfile
-import os
 from TTS.api import TTS as ConquiTTS
+import requests
+from tempfile import NamedTemporaryFile
+from soundfile import SoundFile
 
 
 class LLM:
@@ -150,18 +146,39 @@ class ImageGen:
         pass
 
 
+
 class TTS:
-    def __init__(self, model_name: str):
-        """Initialize TTS with a specific model."""
-        pass
+    def __init__(self, model_name: str = "tts_models/multilingual/multi-dataset/xtts_v2", gpu: bool = True):
+        self.tts = ConquiTTS(model_name, gpu=gpu)
+        self.speaker_wav = None
 
-    def audio(self, text: str) -> bytes:
-        """Generate audio from text and return as bytes."""
-        pass
+    def set_speaker(self, speaker_wav: str):
+        self.speaker_wav = speaker_wav
+        print(f"Speaker voice set from file: {self.speaker_wav}")
 
-    def speak(self, text: str) -> None:
-        """Generate and play audio from text automatically."""
-        pass
+    def synthesize(self, text: str, output_file: str = "output.wav", language: str = "en"):
+        if not self.speaker_wav:
+            print("Error: Speaker audio is not set. Please set it using `set_speaker()`.")
+            return
+        
+        self.tts.tts_to_file(
+            text=text,
+            file_path=output_file,
+            speaker_wav=self.speaker_wav,
+            language=language
+        )
+        print(f"Generated speech saved to {output_file}")
+
+    def speak(self, text: str, language: str = "en"):
+        temp_output = "temp_output.wav"
+        self.synthesize(text, output_file=temp_output, language=language)
+        
+        with SoundFile(temp_output) as audio_file:
+            sd.play(audio_file.read(dtype='float32'), samplerate=audio_file.samplerate)
+            sd.wait()
+        
+        os.remove(temp_output)
+
 
 
 class TTSClone:
@@ -180,28 +197,19 @@ class TTSClone:
 
 class STT:
     def __init__(self, model_name: str = "base"):
-        """Initialize STT with a specific Whisper model."""
         self.model = whisper.load_model(model_name)
+        self.saved_audio_path = "speaker_sample.wav"
 
     def transcribe(self, audio_file: str) -> str:
-        """Transcribe an audio file to text."""
         result = self.model.transcribe(audio_file)
         return result["text"]
 
     def _record_audio(self, duration: int = None) -> str:
-        """
-        Record audio using the microphone.
-        If duration is None, waits for the user to start speaking, records until silence is detected.
-
-        Returns:
-            str: The path to the recorded audio file.
-        """
-        fs = 16000  # Sample rate
+        fs = 16000
         silence_threshold = 0.01
-        silence_duration = 0.5  # Seconds of silence to end recording
+        silence_duration = 0.5
         print("Listening... Please start speaking.")
 
-        # Listen for initial speech
         while True:
             chunk = sd.rec(int(fs * 0.5), samplerate=fs, channels=1)
             sd.wait()
@@ -209,7 +217,6 @@ class STT:
                 print("Detected speech, starting recording.")
                 break
 
-        # Start recording
         audio = [chunk]
         silence_chunks = 0
 
@@ -218,33 +225,25 @@ class STT:
             sd.wait()
             audio.append(chunk)
 
-            # Check for silence
             if np.abs(chunk).mean() < silence_threshold:
                 silence_chunks += 1
             else:
                 silence_chunks = 0
 
-            # Stop if silence has lasted long enough
             if silence_chunks > int(silence_duration * 2):
                 print("Silence detected, ending recording.")
                 break
 
-        # Concatenate all chunks into a single audio array
         audio = np.concatenate(audio)
-
-        # Save the audio to a temporary file
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-        write(temp_file.name, fs, (audio * 32767).astype(np.int16))
-        return temp_file.name
-
+        write(self.saved_audio_path, fs, (audio * 32767).astype(np.int16))
+        print(f"Audio saved as {self.saved_audio_path}")
+        return self.saved_audio_path
 
     def speech(self) -> str:
-        """Record audio until silence is detected and transcribe it."""
         audio_file = self._record_audio()
         return self.transcribe(audio_file)
 
     def record(self, duration: int) -> str:
-        """Record audio for a specified duration in seconds and transcribe it."""
         audio_file = self._record_audio(duration=duration)
         return self.transcribe(audio_file)
 
@@ -271,75 +270,57 @@ class OCR:
 
 class WakeWord:
     def __init__(self, wake_word: str, model_name: str = "base"):
-        """Initialize WakeWord detection with a specified wake word and Whisper model."""
         self.wake_word = wake_word.lower()
         self.model = whisper.load_model(model_name)
-        self._wake_flag = False  # Flag to indicate wake word detection
-        self._running = False  # Flag to control background listening thread
+        self._wake_flag = False
+        self._running = False
 
     def _listen_for_wake_word(self):
-        """Background thread to listen for the wake word."""
-        fs = 16000  # Sample rate
-        silence_threshold = 0.01  # Threshold to determine silence
-        chunk_duration = 3  # Duration in seconds for each audio chunk to analyze
+        fs = 16000
+        silence_threshold = 0.01
+        chunk_duration = 3
 
         while self._running:
-            # Record a chunk of audio
             audio_chunk = sd.rec(int(chunk_duration * fs), samplerate=fs, channels=1)
             sd.wait()
 
-            # Check if the audio chunk contains significant sound
             if np.abs(audio_chunk).mean() > silence_threshold:
-                # Save chunk as a temporary file for Whisper
-                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-                write(temp_file.name, fs, (audio_chunk * 32767).astype(np.int16))
-                
-                # Transcribe the audio and look for the wake word
-                transcription = self.model.transcribe(temp_file.name)["text"].lower()
-                if self.wake_word in transcription:
-                    self._wake_flag = True
-                    print("Wake word detected:", transcription)
+                with NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+                    write(temp_file.name, fs, (audio_chunk * 32767).astype(np.int16))
+                    transcription = self.model.transcribe(temp_file.name)["text"].lower()
                     
-                temp_file.close()  # Close and delete the temp file
-                os.remove(temp_file.name)  # Use os.remove to delete the temp file
+                    if self.wake_word in transcription:
+                        self._wake_flag = True
+                        print("Wake word detected:", transcription)
+                    
+                os.remove(temp_file.name)
 
     def detect(self):
-        """Start background listening for the wake word."""
         if not self._running:
             self._running = True
             self._thread = threading.Thread(target=self._listen_for_wake_word, daemon=True)
             self._thread.start()
 
     def status(self) -> bool:
-        """Check if the wake word was detected. Resets flag after checking."""
         if self._wake_flag:
             self._wake_flag = False
             return True
         return False
 
     def wait(self, timeout: int = None) -> bool:
-        """
-        Block until the wake word is detected or the timeout occurs.
-
-        Args:
-            timeout (int, optional): Timeout in seconds. Defaults to None.
-
-        Returns:
-            bool: True if wake word was detected, False if timeout occurred.
-        """
         start_time = time.time()
         while True:
             if self.status():
                 return True
             if timeout and (time.time() - start_time) > timeout:
                 return False
-            time.sleep(0.1)  # Small sleep to prevent CPU overuse
+            time.sleep(0.1)
 
     def stop(self):
-        """Stop the background listening thread."""
         self._running = False
         if hasattr(self, '_thread'):
             self._thread.join()
+
 
 
 
@@ -361,39 +342,109 @@ class API:
 # ])
 # print(response['message']['content'])
 
+
+
+
+
+
+# wake_word_detector = WakeWord("robot", model_name="base")
+# stt = STT("base")
+# llm = LLM("mistral")
+# tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+
+# # Record and save speaker sample for TTS voice cloning
+# print("Please provide a sample of your voice for cloning...")
+# stt._record_audio()  # This saves the audio to speaker_sample.wav by default
+# tts.set_speaker("speaker_sample.wav")
+
+# # Start the wake word detector in the background
+# wake_word_detector.detect()
+
+# try:
+#     while True:
+#         print("Waiting for wake word 'robot'...")
+
+#         # Wait for the wake word, blocking until detected
+#         if wake_word_detector.wait():
+#             print("Wake word detected! Listening for your question...")
+            
+#             # Transcribe user's question
+#             user_input = stt.speech()
+#             print("You said:", user_input)
+            
+#             # Get response from LLM
+#             response = llm.chat(user_input)
+#             print("Assistant:", response)
+            
+#             # Speak the response
+#             tts.speak(response)
+
+#         # Reset and continue to wait for the wake word
+#         print("Listening for wake word 'robot' again...")
+
+# except KeyboardInterrupt:
+#     print("Voice chat terminated.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 stt = STT("base")
 llm = LLM("mistral")
+tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+# awake = WakeWord(wake_word="robot", model_name="base")
+
+# awake.detect()
+while True:
+    # while not awake.status():
+        # You can do whatever tasks you want here
+        # time.sleep(0.1)
+
+    #Now we're awake!
+    # awake.stop() #Stop listening
+    print("Speak your command:")
+    command = stt.speech()  # Records until user stops speaking
+    print("USER >>> ", command, "\n")
+
+    # Pass the command to the LLM for a response
+    response = llm.conversation(command)
+    print("ROBOT:", response, "\n")
+
+    tts.set_speaker("speaker_sample.wav")
+    tts.speak(response)
+
+    #Start listening again
+    # awake.detect()
 
 
 
-wake_word_detector = WakeWord(wake_word="robot", model_name="base")
-
-# Start detecting in the background
-wake_word_detector.detect()
-
-print("Waiting for wake word...")
-if wake_word_detector.wait(timeout=100):
-    print("Wake word detected!")
-else:
-    print("Timeout reached without wake word.")
-
-# Alternatively, you can poll with status for non-blocking checks
-while not wake_word_detector.status():
-    print("Wake word not yet detected; doing other tasks...")
-    time.sleep(1)
-
-# Stop background listening once done
-wake_word_detector.stop()
 
 
 
-print("Speak your command:")
-command = stt.speech()  # Records until user stops speaking
-print("You said:", command)
 
-# Pass the command to the LLM for a response
-response = llm.chat(command)
-print("Assistant:", response)
+
+
+
+
+
 
 exit()
 
