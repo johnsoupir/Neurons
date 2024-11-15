@@ -8,6 +8,13 @@ try:
 except ImportError:
     has_ollama_lib = False
 import requests
+import whisper
+import sounddevice as sd
+import numpy as np
+from scipy.io.wavfile import write
+import tempfile
+
+
 
 class LLM:
     def __init__(self, model_name: str):
@@ -164,17 +171,74 @@ class TTSClone:
 
 
 class STT:
-    def __init__(self, model_name: str = "whisper"):
-        """Initialize STT with a specific model (e.g., 'whisper')."""
-        pass
+    def __init__(self, model_name: str = "base"):
+        """Initialize STT with a specific Whisper model."""
+        self.model = whisper.load_model(model_name)
 
-    def transcribe(self, audio_file: bytes) -> str:
+    def transcribe(self, audio_file: str) -> str:
         """Transcribe an audio file to text."""
-        pass
+        result = self.model.transcribe(audio_file)
+        return result["text"]
 
-    def record(self) -> str:
-        """Record live audio and return its transcription."""
-        pass
+    def _record_audio(self, duration: int = None) -> str:
+        """
+        Record audio using the microphone.
+        If duration is None, waits for the user to start speaking, records until silence is detected.
+
+        Returns:
+            str: The path to the recorded audio file.
+        """
+        fs = 16000  # Sample rate
+        silence_threshold = 0.01
+        silence_duration = 0.5  # Seconds of silence to end recording
+        print("Listening... Please start speaking.")
+
+        # Listen for initial speech
+        while True:
+            chunk = sd.rec(int(fs * 0.5), samplerate=fs, channels=1)
+            sd.wait()
+            if np.abs(chunk).mean() > silence_threshold:
+                print("Detected speech, starting recording.")
+                break
+
+        # Start recording
+        audio = [chunk]
+        silence_chunks = 0
+
+        while True:
+            chunk = sd.rec(int(fs * 0.5), samplerate=fs, channels=1)
+            sd.wait()
+            audio.append(chunk)
+
+            # Check for silence
+            if np.abs(chunk).mean() < silence_threshold:
+                silence_chunks += 1
+            else:
+                silence_chunks = 0
+
+            # Stop if silence has lasted long enough
+            if silence_chunks > int(silence_duration * 2):
+                print("Silence detected, ending recording.")
+                break
+
+        # Concatenate all chunks into a single audio array
+        audio = np.concatenate(audio)
+
+        # Save the audio to a temporary file
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+        write(temp_file.name, fs, (audio * 32767).astype(np.int16))
+        return temp_file.name
+
+
+    def speech(self) -> str:
+        """Record audio until silence is detected and transcribe it."""
+        audio_file = self._record_audio()
+        return self.transcribe(audio_file)
+
+    def record(self, duration: int) -> str:
+        """Record audio for a specified duration in seconds and transcribe it."""
+        audio_file = self._record_audio(duration=duration)
+        return self.transcribe(audio_file)
 
 
 class VideoGen:
@@ -225,7 +289,18 @@ class API:
 # ])
 # print(response['message']['content'])
 
+stt = STT("base")
+llm = LLM("mistral")
 
+print("Speak your command:")
+command = stt.speech()  # Records until user stops speaking
+print("You said:", command)
+
+# Pass the command to the LLM for a response
+response = llm.chat(command)
+print("Assistant:", response)
+
+exit()
 
 # Initialize LLM and start a conversation
 llm = LLM("mistral")
