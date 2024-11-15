@@ -13,7 +13,15 @@ import sounddevice as sd
 import numpy as np
 from scipy.io.wavfile import write
 import tempfile
-
+import threading
+import time
+import sounddevice as sd
+import numpy as np
+from scipy.io.wavfile import write
+import whisper
+import tempfile
+import os
+from TTS.api import TTS as ConquiTTS
 
 
 class LLM:
@@ -262,13 +270,77 @@ class OCR:
 
 
 class WakeWord:
-    def __init__(self, model_name: str):
-        """Initialize WakeWord with a specific model."""
-        pass
+    def __init__(self, wake_word: str, model_name: str = "base"):
+        """Initialize WakeWord detection with a specified wake word and Whisper model."""
+        self.wake_word = wake_word.lower()
+        self.model = whisper.load_model(model_name)
+        self._wake_flag = False  # Flag to indicate wake word detection
+        self._running = False  # Flag to control background listening thread
 
-    def listen(self) -> bool:
-        """Listen for a wake word and return True when detected."""
-        pass
+    def _listen_for_wake_word(self):
+        """Background thread to listen for the wake word."""
+        fs = 16000  # Sample rate
+        silence_threshold = 0.01  # Threshold to determine silence
+        chunk_duration = 3  # Duration in seconds for each audio chunk to analyze
+
+        while self._running:
+            # Record a chunk of audio
+            audio_chunk = sd.rec(int(chunk_duration * fs), samplerate=fs, channels=1)
+            sd.wait()
+
+            # Check if the audio chunk contains significant sound
+            if np.abs(audio_chunk).mean() > silence_threshold:
+                # Save chunk as a temporary file for Whisper
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                write(temp_file.name, fs, (audio_chunk * 32767).astype(np.int16))
+                
+                # Transcribe the audio and look for the wake word
+                transcription = self.model.transcribe(temp_file.name)["text"].lower()
+                if self.wake_word in transcription:
+                    self._wake_flag = True
+                    print("Wake word detected:", transcription)
+                    
+                temp_file.close()  # Close and delete the temp file
+                os.remove(temp_file.name)  # Use os.remove to delete the temp file
+
+    def detect(self):
+        """Start background listening for the wake word."""
+        if not self._running:
+            self._running = True
+            self._thread = threading.Thread(target=self._listen_for_wake_word, daemon=True)
+            self._thread.start()
+
+    def status(self) -> bool:
+        """Check if the wake word was detected. Resets flag after checking."""
+        if self._wake_flag:
+            self._wake_flag = False
+            return True
+        return False
+
+    def wait(self, timeout: int = None) -> bool:
+        """
+        Block until the wake word is detected or the timeout occurs.
+
+        Args:
+            timeout (int, optional): Timeout in seconds. Defaults to None.
+
+        Returns:
+            bool: True if wake word was detected, False if timeout occurred.
+        """
+        start_time = time.time()
+        while True:
+            if self.status():
+                return True
+            if timeout and (time.time() - start_time) > timeout:
+                return False
+            time.sleep(0.1)  # Small sleep to prevent CPU overuse
+
+    def stop(self):
+        """Stop the background listening thread."""
+        self._running = False
+        if hasattr(self, '_thread'):
+            self._thread.join()
+
 
 
 class API:
@@ -291,6 +363,29 @@ class API:
 
 stt = STT("base")
 llm = LLM("mistral")
+
+
+
+wake_word_detector = WakeWord(wake_word="robot", model_name="base")
+
+# Start detecting in the background
+wake_word_detector.detect()
+
+print("Waiting for wake word...")
+if wake_word_detector.wait(timeout=100):
+    print("Wake word detected!")
+else:
+    print("Timeout reached without wake word.")
+
+# Alternatively, you can poll with status for non-blocking checks
+while not wake_word_detector.status():
+    print("Wake word not yet detected; doing other tasks...")
+    time.sleep(1)
+
+# Stop background listening once done
+wake_word_detector.stop()
+
+
 
 print("Speak your command:")
 command = stt.speech()  # Records until user stops speaking
