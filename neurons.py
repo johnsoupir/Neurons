@@ -1,14 +1,6 @@
 # neurons.py
 # Main Neurons library containing all modules 
-# neurons.py
-try:
-    import ollama  # Attempt to import the Ollama Python library
-    from ollama import ResponseError
-    has_ollama_lib = True
-except ImportError:
-    has_ollama_lib = False
-import os
-import threading
+
 import time
 import sounddevice as sd
 import numpy as np
@@ -18,6 +10,14 @@ from TTS.api import TTS as ConquiTTS
 import requests
 from tempfile import NamedTemporaryFile
 from soundfile import SoundFile
+try:
+    import ollama  # Attempt to import the Ollama Python library
+    from ollama import ResponseError
+    has_ollama_lib = True
+except ImportError:
+    has_ollama_lib = False
+import os
+import threading
 
 
 class LLM:
@@ -134,8 +134,6 @@ class LLM:
 
         return response_content
 
-
-
 class ImageGen:
     def __init__(self, model_name: str):
         """Initialize ImageGen with a specific model."""
@@ -144,8 +142,6 @@ class ImageGen:
     def __call__(self, prompt: str) -> bytes:
         """Generate an image based on the prompt and return as bytes."""
         pass
-
-
 
 class TTS:
     def __init__(self, model_name: str = "tts_models/multilingual/multi-dataset/xtts_v2", gpu: bool = True):
@@ -179,8 +175,6 @@ class TTS:
         
         os.remove(temp_output)
 
-
-
 class TTSClone:
     def __init__(self, model_name: str):
         """Initialize TTSClone with a specific model for voice cloning."""
@@ -193,7 +187,6 @@ class TTSClone:
     def speak_as(self, text: str) -> None:
         """Generate and play audio using the cloned voice."""
         pass
-
 
 class STT:
     def __init__(self, model_name: str = "base"):
@@ -247,7 +240,6 @@ class STT:
         audio_file = self._record_audio(duration=duration)
         return self.transcribe(audio_file)
 
-
 class VideoGen:
     def __init__(self, model_name: str):
         """Initialize VideoGen with a specific model."""
@@ -257,7 +249,6 @@ class VideoGen:
         """Generate video from prompt and return as bytes."""
         pass
 
-
 class OCR:
     def __init__(self, model_name: str):
         """Initialize OCR with a specific model."""
@@ -266,7 +257,6 @@ class OCR:
     def recognize(self, image_data: bytes) -> str:
         """Perform OCR on image data and return recognized text."""
         pass
-
 
 class WakeWord:
     def __init__(self, wake_word: str, model_name: str = "base"):
@@ -321,9 +311,6 @@ class WakeWord:
         if hasattr(self, '_thread'):
             self._thread.join()
 
-
-
-
 class API:
     def __init__(self, api_key: str):
         """Initialize API with an API key for external service access."""
@@ -332,129 +319,3 @@ class API:
     def call(self, endpoint: str, payload: dict) -> dict:
         """Call an API endpoint with payload and return JSON response."""
         pass
-
-# import ollama
-# response = ollama.chat(model='llama3.1', messages=[
-#   {
-#     'role': 'user',
-#     'content': 'Why is the sky blue?',
-#   },
-# ])
-# print(response['message']['content'])
-
-
-
-
-
-
-# wake_word_detector = WakeWord("robot", model_name="base")
-# stt = STT("base")
-# llm = LLM("mistral")
-# tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-
-# # Record and save speaker sample for TTS voice cloning
-# print("Please provide a sample of your voice for cloning...")
-# stt._record_audio()  # This saves the audio to speaker_sample.wav by default
-# tts.set_speaker("speaker_sample.wav")
-
-# # Start the wake word detector in the background
-# wake_word_detector.detect()
-
-# try:
-#     while True:
-#         print("Waiting for wake word 'robot'...")
-
-#         # Wait for the wake word, blocking until detected
-#         if wake_word_detector.wait():
-#             print("Wake word detected! Listening for your question...")
-            
-#             # Transcribe user's question
-#             user_input = stt.speech()
-#             print("You said:", user_input)
-            
-#             # Get response from LLM
-#             response = llm.chat(user_input)
-#             print("Assistant:", response)
-            
-#             # Speak the response
-#             tts.speak(response)
-
-#         # Reset and continue to wait for the wake word
-#         print("Listening for wake word 'robot' again...")
-
-# except KeyboardInterrupt:
-#     print("Voice chat terminated.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-stt = STT("base")
-llm = LLM("mistral")
-tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-# awake = WakeWord(wake_word="robot", model_name="base")
-
-# awake.detect()
-while True:
-    # while not awake.status():
-        # You can do whatever tasks you want here
-        # time.sleep(0.1)
-
-    #Now we're awake!
-    # awake.stop() #Stop listening
-    print("Speak your command:")
-    command = stt.speech()  # Records until user stops speaking
-    print("USER >>> ", command, "\n")
-
-    # Pass the command to the LLM for a response
-    response = llm.conversation(command)
-    print("ROBOT:", response, "\n")
-
-    tts.set_speaker("speaker_sample.wav")
-    tts.speak(response)
-
-    #Start listening again
-    # awake.detect()
-
-
-
-
-
-
-
-
-
-
-
-
-
-exit()
-
-# Initialize LLM and start a conversation
-llm = LLM("mistral")
-response1 = llm.conversation("Why is the sky blue?")
-print("Assistant:", response1, "\n\n")
-
-response2 = llm.conversation("What about sunsets?")
-print("Assistant:", response2, "\n\n")
-
-response2 = llm.chat("What about sunsets?")
-print("Assistant:", response2, "\n\n")
