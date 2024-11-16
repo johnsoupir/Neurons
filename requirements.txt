@@ -1,0 +1,9 @@
+requests
+ollama
+whisper
+sounddevice
+numpy
+tempfile
+soundfile
+scipy
+TTS
